@@ -67,20 +67,38 @@ static inline bool linux_vf_info_layout_fits(
     return true;
 }
 
-// Is the answer the driver put in the buffer usable?
+// Is the answer the driver put in the buffer usable (for reading)?
 //
 // The live backend's rule, now the only rule: a mask with no editable bit at
-// all, or a clock count of zero or above 64, describes no curve this code can
-// write, and treating it as "128 editable points" is what made the probe lie.
+// all, or a clock count above 64, describes no curve this code can read, and
+// treating it as "128 editable points" is what made the probe lie.
+//
+// A clock count of zero with a populated mask is NOT invented data: the
+// integrated GB10 (DGX Spark, driver 580.159.03) answers getInfo with a 127-bit
+// mask and numClocks=0, and getStatus/getControl -- seeded with that same 0 --
+// then return one ordinary 127-point graphics domain (208 MHz @ 452 mV ..
+// 2619 MHz @ 1240 mV). The curve is still checked point by point by
+// linux_vf_snapshot_structurally_valid(); only the write path needs the count,
+// see linux_vf_clock_count_reported().
 static inline bool linux_vf_info_data_usable(const unsigned char* mask,
                                              unsigned int maskBytes,
                                              unsigned int numClocks) {
     if (!mask || maskBytes == 0) return false;
-    if (numClocks == 0 || numClocks > 64) return false;
+    if (numClocks > 64) return false;
     for (unsigned int index = 0; index < maskBytes; ++index) {
         if (mask[index] != 0) return true;
     }
     return false;
+}
+
+// Did the driver report how many clock domains the status table concatenates?
+//
+// Zero means "not reported" (GB10, see above). Such a curve may be read and
+// shown, but nothing on that GPU has validated the VF write ABI, so the VF
+// curve mutation domain stays closed: no offsets are written on the strength
+// of a count the driver never gave.
+static inline bool linux_vf_clock_count_reported(unsigned int numClocks) {
+    return numClocks >= 1 && numClocks <= 64;
 }
 
 // NvAPI EnumPhysicalGPUs writes at most NVAPI_MAX_PHYSICAL_GPUS (64) handles,
@@ -144,7 +162,9 @@ static inline bool linux_vf_snapshot_structurally_valid(
             "VF info/status/control snapshot is incomplete");
         return false;
     }
-    if (numClocks == 0 || numClocks > 64) {
+    // 0 = not reported by the driver (read-only; writes are gated separately
+    // by linux_vf_clock_count_reported()).
+    if (numClocks > 64) {
         if (why) gc_snprintf(why, whySize,
             "VF info clock count is invalid (%u)", numClocks);
         return false;

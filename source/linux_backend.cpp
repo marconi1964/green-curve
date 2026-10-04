@@ -450,6 +450,10 @@ static bool apply_curve_offsets_verified(LinuxGpuState* g, const int* targetOffs
                                          const bool* pointMask, int maxBatchPasses) {
     const VfBackendSpec* b = g->backend;
     if (!b || !b->writeSupported || !targetOffsets || !pointMask) return false;
+    if (!linux_vf_clock_count_reported(g->vfNumClocks)) {
+        lb_log("curve: VF clock count not reported by the driver; writes refused\n");
+        return false;
+    }
 
     bool desiredMask[VF_NUM_POINTS] = {};
     int desiredOffsets[VF_NUM_POINTS] = {};
@@ -674,8 +678,10 @@ bool linux_backend_self_test(LinuxGpuState* g, FILE* out) {
     // derived capability probe.  Keep the refresh envelope printed below in
     // sync with the facts the self-test just captured.
     refresh.health = g->health;
-    fprintf(out, "NvAPI getInfo          : %s (status=%d numClocks=%u)\n",
-            infoOk ? "ok" : "FAILED", g->vfInfoStatus, g->vfNumClocks);
+    fprintf(out, "NvAPI getInfo          : %s (status=%d numClocks=%u%s)\n",
+            infoOk ? "ok" : "FAILED", g->vfInfoStatus, g->vfNumClocks,
+            (infoOk && !linux_vf_clock_count_reported(g->vfNumClocks))
+                ? " not reported: VF curve read-only" : "");
     fprintf(out, "NvAPI getStatus (curve): %s (status=%d points=%d)\n",
             curveOk ? "ok" : "FAILED", g->vfStatusStatus, g->numPopulated);
     fprintf(out, "NvAPI getControl       : %s (status=%d; write ABI probe)\n",
@@ -714,7 +720,11 @@ bool linux_backend_self_test(LinuxGpuState* g, FILE* out) {
 
     bool pass = nvmlOk && infoOk && curveOk && plausible && ctrlOk &&
                 hardwareSnapshotOk;
-    fprintf(out, "\nVerdict: %s\n", pass
+    bool readOnly = pass && !linux_vf_clock_count_reported(g->vfNumClocks);
+    fprintf(out, "\nVerdict: %s\n", readOnly
+            ? "PASS (read-only) — VF curve read and validated; VF writes stay disabled because "
+              "the driver did not report a VF clock count."
+            : pass
             ? "PASS — read + write-struct paths validated; VF apply should work on this driver/arch."
             : "DEGRADED — see exact failure above. VF writes remain gated until a fresh complete "
               "snapshot validates; advertised independent NVML domains still work.");

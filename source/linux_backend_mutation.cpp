@@ -103,7 +103,10 @@ bool linux_backend_capture_snapshot(LinuxGpuState* g, LinuxHardwareSnapshot* sna
     g->powerLimitCurrentmW = snapshot->powerLimitmW > 0
         ? (int)snapshot->powerLimitmW : 0;
     g->powerLimitDefaultmW = powerDefaultmW > 0 ? (int)powerDefaultmW : 0;
+    // A curve read with an unreported clock count is shown, never offered for
+    // writing: curveValid gates SERVICE_MUTATION_DOMAIN_VF_CURVE below.
     if (g->gpuHandle && g->backend && g->backend->writeSupported &&
+        linux_vf_clock_count_reported(g->vfNumClocks) &&
         linux_vf_snapshot_authoritative(
             g->vfInfoFresh, g->vfStatusFresh, g->vfControlFresh,
             g->vfStructureValid, g->vfSnapshotFresh) &&

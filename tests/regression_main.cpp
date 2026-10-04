@@ -4911,6 +4911,16 @@ static int run_all_tests(int argc, char** argv) {
         full[41].volt_uV = 0;
         if (linux_vf_graphics_domain_length(full, VF_NUM_POINTS) != VF_NUM_POINTS)
             return 1684;
+        // GB10 shape: one 127-point domain read with numClocks=0 ("not
+        // reported") validates structurally; an over-64 count still does not.
+        if (!linux_vf_snapshot_structurally_valid(
+                true, true, true, mask, sizeof(mask), 0,
+                truncated, offsets, 127, domainWhy, sizeof(domainWhy)))
+            return 1685;
+        if (linux_vf_snapshot_structurally_valid(
+                true, true, true, mask, sizeof(mask), 65,
+                truncated, offsets, 127, domainWhy, sizeof(domainWhy)))
+            return 1686;
     }
 
     // Atomic VF validation accepts a legitimate non-monotonic live frequency
@@ -17259,16 +17269,23 @@ static int run_all_tests_final() {
         if (linux_vf_info_layout_fits(kInfoSize + 1, 0x100, 0x200, kMaskBytes, kInfoSize))
             return 5322;
 
-        // THE DIVERGENCE. An all-zero mask, or a zero/over-64 clock count, is
+        // THE DIVERGENCE. An all-zero mask, or an over-64 clock count, is
         // unusable. The probe copy used to substitute an all-0xFF mask and
         // defaultNumClocks here and report a readable 128-point curve, while
         // the live backend refused the identical answer -- so `--probe` could
-        // green-light a GPU the TUI then refused to drive.
+        // green-light a GPU the TUI then refused to drive. Both paths still
+        // share this one rule; nothing is substituted.
         unsigned char zeroMask[32] = {};
         unsigned char goodMask[32] = {};
         goodMask[0] = 0x01;
         if (linux_vf_info_data_usable(zeroMask, kMaskBytes, 32)) return 5323;
-        if (linux_vf_info_data_usable(goodMask, kMaskBytes, 0)) return 5324;
+        // GB10: populated mask + numClocks=0 ("not reported") is readable ...
+        if (!linux_vf_info_data_usable(goodMask, kMaskBytes, 0)) return 5324;
+        // ... but never writable.
+        if (linux_vf_clock_count_reported(0)) return 6687;
+        if (!linux_vf_clock_count_reported(1)) return 6688;
+        if (!linux_vf_clock_count_reported(64)) return 6689;
+        if (linux_vf_clock_count_reported(65)) return 6690;
         if (linux_vf_info_data_usable(goodMask, kMaskBytes, 65)) return 5325;
         if (!linux_vf_info_data_usable(goodMask, kMaskBytes, 1)) return 5326;
         if (!linux_vf_info_data_usable(goodMask, kMaskBytes, 64)) return 5327;
